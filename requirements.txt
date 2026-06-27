@@ -1,3 +1,10 @@
 mistralai
 python-dotenv
 requests
+streamlit
+langchain
+langchain-core
+langchain-community
+langchain-mistralai
+mistralai
+python-dotenv

@@ -1,3 +1,4 @@
+Live: https://mood-bott.streamlit.app/
 # 🎭 AI Mood Chatbot
 
 An interactive chatbot that responds based on different moods — Angry 😡, Funny 😂, and Sad 😢.

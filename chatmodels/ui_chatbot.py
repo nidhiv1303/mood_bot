@@ -1,12 +1,5 @@
-from dotenv import load_dotenv
-load_dotenv()
-
-from datetime import datetime
-from collections import Counter
-
+import os
 import streamlit as st
-from langchain_mistralai import ChatMistralAI
-from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -15,6 +8,22 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+from dotenv import load_dotenv
+# Load environment variables
+load_dotenv()
+
+# Streamlit secrets integration
+if "MISTRAL_API_KEY" in st.secrets:
+    os.environ["MISTRAL_API_KEY"] = st.secrets["MISTRAL_API_KEY"]
+elif "mistral_api_key" in st.secrets:
+    os.environ["MISTRAL_API_KEY"] = st.secrets["mistral_api_key"]
+
+from datetime import datetime
+from collections import Counter
+
+from langchain_mistralai import ChatMistralAI
+from langchain_core.messages import AIMessage, SystemMessage, HumanMessage
 
 # ── Moods ─────────────────────────────────────────────────────────────────────
 MOODS = {
@@ -38,9 +47,15 @@ for k, v in defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
 
+# ── API Key check ─────────────────────────────────────────────────────────────
+api_key = os.environ.get("MISTRAL_API_KEY")
+has_api_key = bool(api_key and api_key.strip())
+
 # ── Model ─────────────────────────────────────────────────────────────────────
 @st.cache_resource
 def get_model():
+    if not has_api_key:
+        return None
     return ChatMistralAI(model="mistral-small-2506", streaming=True)
 
 model = get_model()
@@ -97,7 +112,29 @@ tab1, tab2 = st.tabs(["🎭 Chat", "⚡ Compare Moods"])
 with tab1:
     st.title("🎭 AI Mood Chat")
 
-    if not st.session_state.active_moods:
+    if not has_api_key:
+        st.error("🔑 **Mistral API Key is missing!**")
+        st.markdown(
+            """
+            To run this app on Streamlit Cloud or locally, you need to configure your Mistral API key:
+            
+            ### 🌐 If Deployed on Streamlit Cloud:
+            1. Go to your Streamlit App Dashboard.
+            2. Click on **Settings** -> **Secrets**.
+            3. Add the following line to your secrets:
+               ```toml
+               MISTRAL_API_KEY = "your_mistral_api_key_here"
+               ```
+            4. Save and restart the app.
+            
+            ### 💻 If Running Locally:
+            Create a file named `.env` in the root of your project and add:
+            ```env
+            MISTRAL_API_KEY=your_mistral_api_key_here
+            ```
+            """
+        )
+    elif not st.session_state.active_moods:
         st.info("Select a mood from sidebar")
     else:
         for msg in st.session_state.chat_history:
@@ -113,14 +150,24 @@ with tab1:
             with st.chat_message("assistant"):
                 placeholder = st.empty()
                 full = ""
-                for chunk in model.stream(st.session_state.messages):
-                    full += chunk.content
-                    placeholder.markdown(full + "▌")
-                placeholder.markdown(full)
-
-            st.session_state.messages.append(AIMessage(content=full))
-            st.session_state.chat_history.append({"role": "assistant", "content": full})
-            st.rerun()
+                try:
+                    for chunk in model.stream(st.session_state.messages):
+                        full += chunk.content
+                        placeholder.markdown(full + "▌")
+                    placeholder.markdown(full)
+                    st.session_state.messages.append(AIMessage(content=full))
+                    st.session_state.chat_history.append({"role": "assistant", "content": full})
+                    st.rerun()
+                except Exception as e:
+                    placeholder.empty()
+                    error_msg = str(e)
+                    if "401" in error_msg or "unauthorized" in error_msg.lower() or "apikey" in error_msg.lower():
+                        st.error(
+                            "❌ **Authentication Error (401 Unauthorized)**: The provided Mistral API key is invalid or unauthorized.\n\n"
+                            "Please verify that your `MISTRAL_API_KEY` is correct in your Streamlit Secrets / `.env` file."
+                        )
+                    else:
+                        st.error(f"❌ An error occurred: {error_msg}")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # TAB 2 → COMPARE ALL MOODS
@@ -132,7 +179,10 @@ with tab2:
     compare_input = st.text_input("Your question", key="compare_input")
     intensity_compare = st.slider("Intensity", 1, 10, 7, key="compare_intensity")
 
-    if st.button("⚡ Compare all moods") and compare_input:
+    if not has_api_key:
+        st.error("🔑 **Mistral API Key is missing!**")
+        st.markdown("Please configure your `MISTRAL_API_KEY` in Streamlit Secrets or a `.env` file.")
+    elif st.button("⚡ Compare all moods") and compare_input:
         cols = st.columns(3)
 
         for i, (mood_key, cfg) in enumerate(MOODS.items()):
@@ -147,6 +197,15 @@ with tab2:
                 ]
 
                 with st.spinner("Thinking..."):
-                    response = model.invoke(msgs)
-
-                st.info(response.content)
+                    try:
+                        response = model.invoke(msgs)
+                        st.info(response.content)
+                    except Exception as e:
+                        error_msg = str(e)
+                        if "401" in error_msg or "unauthorized" in error_msg.lower() or "apikey" in error_msg.lower():
+                            st.error(
+                                "❌ **Authentication Error (401 Unauthorized)**: The provided Mistral API key is invalid or unauthorized.\n\n"
+                                "Please verify that your `MISTRAL_API_KEY` is correct in your Streamlit Secrets / `.env` file."
+                            )
+                        else:
+                            st.error(f"❌ An error occurred: {error_msg}")
